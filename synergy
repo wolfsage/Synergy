@@ -13,8 +13,13 @@ use POE::Component::Server::SimpleHTTP;
 use Time::Duration::Parse;
 use Time::Duration;
 use YAML::XS;
+use Storable qw(nfreeze thaw);
+use Path::Tiny qw(path);
 
 use Synergy::User;
+use Synergy::Reminder;
+
+use constant state_version => 0;
 
 my $JSON = JSON->new;
 
@@ -49,6 +54,12 @@ has users => (
         keys %uconf;
     return \%users;
   },
+);
+
+has reminders => (
+  is => 'ro',
+  isa => 'HashRef',
+  default => sub { {} },
 );
 
 sub phone_for_username {
@@ -914,24 +925,38 @@ sub SAID_remind {
 
   my $target = $who->username eq $arg->{who} ? 'you' : $who->username;
 
+  my $reminder = Synergy::Reminder->new({
+    action         => 'send_reminder',
+    time           => $time,
+    reply_arg      => { %$arg, who => $who->username, page => !! $want_page },
+    requested_time => DateTime->now(time_zone => 'America/New_York'),
+    message        => $rest,
+  });
+
   $self->alarm_add(
     send_reminder => $time,
-    { %$arg, who => $who->username, page => !! $want_page },
-    DateTime->now(time_zone => 'America/New_York'),
-    $rest,
+    $reminder,
   );
+
+  $self->reminders->{$reminder->guid} = $reminder;
 
   $self->reply("Okay, I'll remind $target at " . localtime $time, $arg);
 }
 
 event send_reminder => sub {
-  my ($self, $reply_arg, $requested_time, $msg) = @_[OBJECT, ARG0..ARG2];
+  my ($self, $reminder) = @_[OBJECT, ARG0];
+
+  my $reply_arg = $reminder->reply_arg;
+  my $requested_time = $reminder->requested_time;
+  my $msg = $reminder->message;
 
   if (my $phone = $self->phone_for_username($reply_arg->{who})) {
     $self->sms($phone, "Reminder from $requested_time: $msg");
   }
 
   $self->reply("Reminder from $requested_time: $msg", $reply_arg);
+
+  delete $self->reminders->{$reminder->guid};
 };
 
 sub SAID_abort {
@@ -2136,10 +2161,87 @@ sub SAID_clox {
   return $self->reply($str, $arg);
 }
 
+sub save_state {
+  my ($self) = @_;
+
+  my %timers;
+
+  for my $user ($self->users) {
+    next unless my $sy_timer = $user->timer;
+
+    my $username = $user->username;
+
+    $timers{$username} = $sy_timer;
+  }
+
+  path("state.dat")->spew(nfreeze({
+    version => state_version,
+    timers => \%timers,
+    reminders => $self->reminders,
+  }));
+}
+
+sub load_state {
+  my ($self) = @_;
+
+  my $f = path("state.dat");
+  return unless $f->exists;
+
+  my $state;
+  eval { $state = thaw($f->slurp); };
+
+  if ($@) {
+    warn "Failed to parse state.dat, ignoring ($@)\n";
+    return;
+  } elsif ( ! defined $state->{version} 
+           || $state->{version} != state_version
+  ) {
+    warn(
+        "state.dat version $state->{version} does not match ours ("
+      . state_version
+      . ") ignoring..."
+    );
+    return;
+  }
+
+  for my $username (keys %{ $state->{timers} }) {
+    my $user = $self->user_named($username);
+
+    unless ($user) {
+      warn "Ignoring timer for non-existent user $username\n";
+      next;
+    }
+
+    my $timer = $state->{timers}->{$username};
+    unless ($timer) {
+      warn "No timer data found in state for $username?!\n";
+      next;
+    }
+
+    $user->timer($timer);
+    warn "Restored timer for $username\n";
+  }
+
+  for my $reminder (values %{ $state->{reminders} }) {
+    $self->alarm_add(
+      send_reminder => $reminder->time,
+      $reminder,
+    );
+
+    $self->reminders->{$reminder->guid} = $reminder;
+
+    warn "Restored reminder for " . $reminder->reply_arg->{who} . "\n";
+  }
+}
+
 sub BUILD {
   my ($self) = @_;
 
+  $self->load_state;
+
   $self->delay(nag => 60, qw(foo bar baz));
+
+  $SIG{INT} = sub { $self->save_state; exit; };
 }
 
 __PACKAGE__->run;

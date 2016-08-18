@@ -46,7 +46,7 @@ has nicknames => (
 );
 
 has timer => (
-  is   => 'ro',
+  is   => 'rw',
   lazy => 1,
   init_arg => undef,
   default  => sub {
