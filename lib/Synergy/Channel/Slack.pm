@@ -3,12 +3,14 @@ package Synergy::Channel::Slack;
 
 use Moose;
 use experimental qw(signatures);
-use JSON::MaybeXS qw(encode_json decode_json);
+use JSON::MaybeXS;
 
 use Synergy::Event;
 use Synergy::ReplyChannel;
 
 use namespace::autoclean;
+
+my $JSON = JSON->new->canonical;
 
 with 'Synergy::Role::Channel';
 
@@ -37,7 +39,7 @@ sub start ($self) {
     return unless $frame;
 
     my $event;
-    unless (eval { $event = decode_json($frame) }) {
+    unless (eval { $event = $JSON->decode($frame) }) {
       warn "ERROR DECODING <$frame> <$@>\n";
       return;
     }
@@ -65,9 +67,14 @@ sub start ($self) {
     # decode text
     my $me = $self->slack->own_name;
     my $text = $self->decode_slack_usernames($event->{text});
-    $text =~ s/\A \@?($me)(?=\W):?\s*//x;
 
+    $text =~ s/\A \@?($me)(?=\W):?\s*//x;
     my $was_targeted = !! $1;
+
+    $text =~ s/&lt;/</g;
+    $text =~ s/&gt;/>/g;
+    $text =~ s/&amp;/&/g;
+
     my $is_public = $event->{channel} =~ /^C/;
     $was_targeted = 1 if not $is_public;   # private replies are always targeted
 
@@ -79,6 +86,7 @@ sub start ($self) {
       from_channel => $self,
       from_address => $event->{user},
       ( $from_user ? ( from_user => $from_user ) : () ),
+      transport_data => $event,
     });
 
     my $rch = Synergy::ReplyChannel->new(
@@ -98,12 +106,35 @@ sub decode_slack_usernames ($self, $text) {
 }
 
 sub send_text ($self, $target, $text) {
+  $text =~ s/&/&amp;/g;
+  $text =~ s/</&lt;/g;
+  $text =~ s/>/&gt;/g;
+
   $self->slack->api_call("chat.postMessage", {
     text    => $text,
     channel => $target,
     as_user => 1,
   });
   return;
+}
+
+sub describe_event ($self, $event) {
+  my $who = $event->from_user ? $event->from_user->username
+                              : $self->slack->users->{$event->from_address}{name};
+
+  my $channel_id = $event->transport_data->{channel};
+
+  my $slack = $self->name;
+
+  if ($channel_id =~ /^C/) {
+    my $channel = $self->slack->channels->{$channel_id}{name};
+
+    return "a message on #$channel from $who on slack $slack";
+  } elsif ($channel_id =~ /^D/) {
+    return "a private message from $who on slack $slack";
+  } else {
+    return "an unknown slack communication from $who on slack $slack";
+  }
 }
 
 1;

@@ -47,7 +47,7 @@ has _channels_by_name => (
   default         => sub ($self) {
     my %by_name;
     for my $k (keys $self->channels->%*) {
-      $by_name{ $self->channels->{ $k } } = $k;
+      $by_name{ $self->channels->{ $k }{name} } = $self->channels->{ $k };
     }
 
     return \%by_name;
@@ -159,7 +159,7 @@ sub load_channels ($self) {
   })->on_done(sub ($http_res) {
     my $res = decode_json($http_res->decoded_content);
     $self->_set_channels({
-      map { $_->{id}, $_->{name} } $res->{channels}->@*
+      map { $_->{id}, $_ } $res->{channels}->@*
     });
   });
 }

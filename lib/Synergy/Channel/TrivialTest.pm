@@ -33,6 +33,8 @@ sub send_text ($self, $address, $text) {
   $self->record_message({ address => $address, text => $text });
 }
 
+sub describe_event { "you can't make me" }
+
 has sent_messages => (
   isa => 'ArrayRef',
   default  => sub {  []  },
