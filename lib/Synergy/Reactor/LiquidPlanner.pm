@@ -107,6 +107,8 @@ my %KNOWN = (
                   "chill: do not nag about a timer until you say something new",
                   "chill until WHEN: do not nag until the designated time",
                   ],
+  close     =>  [ \&_handle_close,
+                  "close TASK-ID: mark a task as done" ],
   commit    =>  [ \&_handle_commit,
                   "commit [COMMENT]: commit your LiquidPlanner timer, with optional comment",
                 ],
@@ -1899,6 +1901,7 @@ sub _handle_chill ($self, $event, $text) {
     $sy_timer->chill_until_active(1);
     $self->save_state;
     return $event->reply("Okay, I'll stop pestering you until you've active again.");
+  return $event->reply("
   }
 
   my $time = parse_time_hunk($text, $user);
@@ -1922,6 +1925,26 @@ sub _handle_chill ($self, $event, $text) {
 
 sub _handle_triple_zed ($self, $event, $text) {
   $self->_handle_chill($event, "");
+}
+
+sub _handle_close ($self, $event, $text) {
+  my $user = $event->from_user;
+
+  return $event->reply($ERR_NO_LP)
+    unless $user && $user->lp_auth_header;
+
+  if (my $task_id = $self->maybe_get_task_id($name)) {
+    my $task_res = $lpc->get_item($task_id);
+
+    return $event->reply("Sorry, something went wrong trying to find that task.")
+      unless $task_res->is_success;
+
+    return $event->reply("Sorry, I couldn't find that task.")
+      if $task_res->is_nil;
+
+    fuck
+    https://app.liquidplanner.com/api/v1/workspaces/:id/tasks/:id
+  }
 }
 
 sub _handle_commit ($self, $event, $comment) {
@@ -2098,8 +2121,7 @@ sub _handle_start ($self, $event, $text) {
     return $self->_handle_start_existing($event, $task);
   }
 
-  if ($text =~ /\A[0-9]+\z/) {
-    my $task_id = $text;
+  if (my $task_id = $self->maybe_get_task_id($text)) {
     my $task_res = $lpc->get_item($task_id);
 
     return $event->reply("Sorry, something went wrong trying to find that task.")
@@ -2337,10 +2359,7 @@ sub _handle_spent ($self, $event, $text) {
 
   my $workspace_id = $self->workspace_id;
 
-  if (
-    $name =~ m{\A\s*(?:https://app.liquidplanner.com/space/$workspace_id/.*/)?([0-9]+)P?/?\s*\z}
-  ) {
-    my ($task_id) = ($1);
+  if (my $task_id = $self->maybe_get_task_id($name)) {
     return $self->_spent_on_existing($event, $task_id, $duration);
   }
 
@@ -2930,6 +2949,18 @@ sub _handle_contents ($self, $event, $rest) {
       slack => $slack_summary,
     },
   );
+}
+
+sub maybe_get_task_id ($self, $text) {
+  my $workspace_id  = $self->workspace_id;
+
+  if (
+    $text =~ m{\A\s*(?:https://app.liquidplanner.com/space/$workspace_id/.*/)?([0-9]+)P?/?\s*\z}
+  ) {
+    return $1;
+  }
+
+  return undef;
 }
 
 1;
