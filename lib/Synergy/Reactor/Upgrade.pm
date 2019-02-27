@@ -24,6 +24,12 @@ has fetch_spec => (
   required => 1,
 );
 
+my @force_upgrade_complaints = (
+  "I feel weird... as if... my past isn't what it used to be...",
+  "I... think I have some holes in my memory...",
+  "What day is it? Something doesn't feel right...",
+);
+
 sub start ($self) {
   if (my $state = $self->fetch_state) {
     my $to_channel = $state->{restart_channel_name};
@@ -33,6 +39,11 @@ sub start ($self) {
     if ($to_channel && $to_address) {
       $self->hub->channel_named($to_channel)
            ->send_message($to_address, "Restarted! Now at version $version_desc");
+
+      if ($state->{restart_was_force_pushed}) {
+        $self->hub->channel_named($to_channel)
+           ->send_message($to_address, $force_upgrade_complaints[rand @force_upgrade_complaints]);
+      }
     }
 
     # Notified. Maybe. Don't notify again
@@ -98,6 +109,38 @@ sub handle_upgrade ($self, $event) {
     return;
   }
 
+  my $was_force_pushed;
+
+  {
+    my $still_there = '';
+
+    $self->git_do(
+      "branch --contains $old_version",
+      \$still_there,
+    );
+
+    chomp($still_there);
+
+    my @branches = split(/\n/, $still_there);
+
+    if (! @branches) {
+      $was_force_pushed = 1;
+    } else {
+      my $current_branch = '';
+
+      $self->git_do(
+        "git rev-parse --abbrev-ref HEAD",
+        \$current_branch
+      );
+
+      chomp($current_branch);
+
+      unless (grep {; $_ eq $current_branch } @branches) {
+        $was_force_pushed = 1;
+      }
+    }
+  }
+
   my $new_version = $self->get_version;
 
   if ($new_version eq $old_version) {
@@ -117,9 +160,10 @@ sub handle_upgrade ($self, $event) {
   }
 
   $self->save_state({
-    restart_channel_name => $event->from_channel->name,
-    restart_to_address   => $event->conversation_address,
-    restart_version_desc => $self->get_version_desc,
+    restart_channel_name     => $event->from_channel->name,
+    restart_to_address       => $event->conversation_address,
+    restart_version_desc     => $self->get_version_desc,
+    restart_was_force_pushed => $was_force_pushed,
   });
 
   my $f = $event->reply("Upgraded from $old_version to $new_version; Restarting...");
