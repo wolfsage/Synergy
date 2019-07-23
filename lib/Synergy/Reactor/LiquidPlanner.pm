@@ -390,6 +390,8 @@ EOH
     "just like search, but with an implicit *type:task*",
   ],
 
+  estimate  =>  [ \&_handle_estimate_tasks, "estimate tasks" ],
+
   inbox     =>  [ \&_handle_inbox,
                   "*inbox `[PAGE]`*: list the tasks in your inbox",
                 ],
@@ -850,6 +852,29 @@ has last_utterances => (
     get_last_utterance => 'get',
   },
 );
+
+has estimate_tasks => (
+  isa       => 'HashRef',
+  init_arg  => undef,
+  default   => sub {  {}  },
+  traits    => [ 'Hash' ],
+  handles   => {
+    set_estimates => 'set',
+    get_estimates => 'get',
+    clear_estimates => 'delete',
+  },
+);
+
+sub is_estimate_running ($self, $event) {
+  return $self->get_estimates($event->source_identifier) ? 1 : 0;
+}
+
+sub get_next_estimate_item ($self, $event) {
+  return unless $self->is_estimate_running($event);
+
+  my $next = $self->get_estimates($event->source_identifier);
+  return shift $next->{itemlist}->{items}->@*;
+}
 
 sub record_utterance ($self, $event) {
   # We're not going to support "++ that" by people who are not users.
@@ -4525,6 +4550,80 @@ sub _summarize_item_list ($self, $items, $arg) {
     events     => [ grep {; $_->{type} eq 'Event' } @$items ],
     others     => [ grep {; $_->{type} !~ /\A Project | Package | Folder | Task | Event \z/x } @$items ],
   };
+}
+
+sub _handle_estimate_tasks ($self, $event, $text) {
+  $event->mark_handled;
+
+  $text =~ s/^estimate\s*//i;
+
+  my $start = $text =~ /^tasks/i;
+
+  return $self->start_estimate_tasks($event) if $start;
+
+  unless ($self->is_estimate_running($event)) {
+    $event->error_reply("You don't have an estimate running");
+
+    return;
+  }
+
+  my $i = $self->get_estimates($event->source_identifier);
+  my $item = $i->{current_task};
+
+  $self->_handle_update_for_task($event, $item, $text);
+
+  $self->begin_next_estimate_item($event);
+}
+
+sub start_estimate_tasks ($self, $event) {
+  if ($self->is_estimate_running($event)) {
+    $event->error_reply("You already have an estimate running in this channel");
+    return;
+  }
+
+  my %search = (
+    owner => { $event->from_user->lp_id => 1 },
+    in    => $self->inbox_package_id,
+  );
+
+  my $lpc     = $self->f_lp_client_for_user($event->from_user);
+  my $future  = $self->_execute_search($lpc, \%search, {});
+  my @res = $future->get;
+
+  my $itemlist = $res[1];
+  unless ($itemlist->{items}->@*) {
+    $self->reply("Your inbox is empty! Horray!");
+    return;
+  }
+
+  $self->set_estimates($event->source_identifier => { itemlist => $itemlist });
+
+  $self->begin_next_estimate_item($event);
+}
+
+sub begin_next_estimate_item ($self, $event) {
+  my $item = $self->get_next_estimate_item($event);
+  unless ($item) {
+    return $self->end_estimates($event);
+  }
+
+  my $uri = $self->item_uri($item->{id});
+  my $name = $item->{name};
+
+  $event->reply("Task: $name - $uri");
+
+  my $i = $self->get_estimates($event->source_identifier);
+  $i->{current_task} = $item;
+
+  return;
+}
+
+sub end_estimates ($self, $event) {
+  $event->reply("No more tasks to estimate!");
+
+  $self->clear_estimates($event->source_identifier);
+
+  return;
 }
 
 1;
