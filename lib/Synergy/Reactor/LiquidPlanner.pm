@@ -4561,6 +4561,10 @@ sub _handle_estimate_tasks ($self, $event, $text) {
 
   return $self->start_estimate_tasks($event) if $start;
 
+  my $stop = $text =~ /^stop/i;
+
+  return $self->stop_estimate_tasks($event) if $stop;
+
   unless ($self->is_estimate_running($event)) {
     $event->error_reply("You don't have an estimate running");
 
@@ -4614,6 +4618,14 @@ sub begin_next_estimate_item ($self, $event) {
 
   my $i = $self->get_estimates($event->source_identifier);
   $i->{current_task} = $item;
+
+  return;
+}
+
+sub stop_estimate_tasks ($self, $event) {
+  $event->reply("Okay, we're done estimating (for now!)");
+
+  $self->clear_estimates($event->source_identifier);
 
   return;
 }
