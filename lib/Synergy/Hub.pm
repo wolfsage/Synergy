@@ -218,7 +218,9 @@ sub handle_event ($self, $event) {
   ]);
 
   my @hits;
-  for my $reactor ($self->reactors) {
+  for my $reactor (sort { $a->sort_id cmp $b->sort_id } $self->reactors) {
+    warn "Checking " . $reactor->sort_id . "\n";
+    warn "  text: " . $event->text . "\n";
     push @hits, map {; [ $reactor, $_ ] } $reactor->listeners_matching($event);
   }
 
@@ -331,7 +333,8 @@ sub synergize {
     my $plural    = "${thing}s";
     my $register  = "register_$thing";
 
-    for my $thing_name (keys %{ $config->{$plural} }) {
+    for my $thing_name (sort keys %{ $config->{$plural} }) {
+      warn "Adding $thing_name\n";
       my $thing_config = $config->{$plural}{$thing_name};
       my $thing_class  = delete $thing_config->{class};
 

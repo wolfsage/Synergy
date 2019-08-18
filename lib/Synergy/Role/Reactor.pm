@@ -11,6 +11,8 @@ use Synergy::Listener;
 
 with 'Synergy::Role::HubComponent';
 
+sub sort_id { 100 }
+
 sub help_entries {
   # Generally here to be overridden.  Should return an arrayref of help
   # entries, each with { title => ..., text => ... }

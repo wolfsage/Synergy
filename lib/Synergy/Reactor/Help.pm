@@ -19,6 +19,7 @@ sub listener_specs {
     predicate => sub ($self, $e) {
       return unless $e->was_targeted;
       return 1 if $e->text =~ /\A h[ae]lp (?: \s+ (.+) )? \z/ix;
+      warn "Skipping " . $e->text . "\n";
       return;
     },
     help_entries => [
@@ -29,6 +30,7 @@ sub listener_specs {
 }
 
 sub handle_help ($self, $event) {
+  warn "handling help\n";
   $event->mark_handled;
 
   my ($help, $rest) = split /\s+/, $event->text, 2;
